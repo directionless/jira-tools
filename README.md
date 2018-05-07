@@ -2,6 +2,8 @@
 
 Inspired by an ex-employer, a set of examples to talk to jira.
 
+While this code will probably work, it should be considered PoC code. 
+
 ## Setup Secrets
 
 You'll need a made up secret, and an RSA key. These will be used to
@@ -48,7 +50,7 @@ python jira-oauth-dance.py -j $jira \
   -s $(echo -n $(cat shared-secret.txt)) \
   -k demo.key
 
-cat credentials.json
+cat ~/.jira-credentials.json
 
 ```
 
@@ -57,6 +59,14 @@ cat credentials.json
 There are many flavors of oauth. As of 2018-Q1, I think jira only
 supports oauth1. Not oauth2. Not OIDC. This you might need to find older
 libraries or examples for how to make it go. 
+
+## ToDo
+
+Some things that would make this more production oriented.
+
+* Port to golang, Distributing python code is hard
+* Use config files to encapsulate common options
+* Don't write secrets to disk, use the keychain
 
 ## References
 

@@ -30,8 +30,7 @@ def parse_args():
                         type=argparse.FileType('r'),
                         help='Consumer RSA Key (Application Secret Shared with Jira)')
 
-    parser.add_argument('-o', '--output', dest='out', default='credentials.json',
-                        type=argparse.FileType('w'),
+    parser.add_argument('-o', '--output', dest='outfile', default='~/.jira-credentials.json',
                         help='Where to output credentials')
 
     parser.add_argument('--no-webbrowser', dest='no_web', action='store_true',
@@ -131,8 +130,21 @@ def main():
 
     test_creds(args.url, credentials)
 
-    # print(json.dumps(credentials, indent=4, sort_keys=True))
-    json.dump(credentials, args.out, indent=4, sort_keys=True)
+    # Some kinda ugly code to read file, ensure it's a dict, update
+    # this jira server, and write it.
+    credfile = os.path.expanduser(args.outfile)
+    creddata = {
+        '_meta': {}
+        }
+    if os.path.exists(credfile) and os.path.isfile(credfile):
+        creddata = open(credfile, 'r').read()
+
+    creddata['_meta']['updated'] = time.strftime('%s')
+    creddata['_meta']['created_by'] = 'Created by https://github.com/directionless/jira-tools'
+    creddata[args.url] = credentials
+
+    with open(credfile, 'w') as fh:
+        json.dump(creddata, fh, indent=4, sort_keys=True)
 
 
 if __name__ == "__main__":
