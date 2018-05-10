@@ -4,6 +4,14 @@ Inspired by an ex-employer, a set of examples to talk to jira.
 
 While this code will probably work, it should be considered PoC code. 
 
+## Config Files
+
+It uses a json config file in `/etc/jira-tools.json` to store the
+shared jira credentials. This allows the shared credentials to be
+managed by existing host management tools.
+
+See [jira-tools.json](./jira-tools.json) for an example
+
 ## Setup Secrets
 
 You'll need a made up secret, and an RSA key. These will be used to
@@ -14,8 +22,10 @@ all users of this application.
 ```
 openssl rand -base64 32 -out shared-secret.txt
 
-openssl genrsa -out demo.key 2048
-openssl rsa -pubout -in demo.key -out demo.crt
+openssl genrsa -out jira.key 2048
+openssl rsa -pubout -in jira.key -out jira.crt
+
+make-json.py | jq . > jira-tools.json
 ```
 
 ## Configure Jira
@@ -46,11 +56,9 @@ Next Popup will be the incoming link:
 As a demo:
 
 ```
-python jira-oauth-dance.py -j $jira \
-  -s $(echo -n $(cat shared-secret.txt)) \
-  -k demo.key
-
+python jira-oauth-dance.py
 cat ~/.jira-credentials.json
+python get-ticket.py TIK-1 TIK-2
 
 ```
 
@@ -65,7 +73,6 @@ libraries or examples for how to make it go.
 Some things that would make this more production oriented.
 
 * Port to golang, Distributing python code is hard
-* Use config files to encapsulate common options
 * Don't write secrets to disk, use the keychain
 
 ## References
