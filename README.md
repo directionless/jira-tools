@@ -74,6 +74,7 @@ Some things that would make this more production oriented.
 
 * Port to golang, Distributing python code is hard
 * Don't write secrets to disk, use the keychain
+* Figure out how to renew credentials, and not just issue new ones
 
 ## References
 
