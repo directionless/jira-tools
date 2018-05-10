@@ -8,27 +8,23 @@ import argparse
 import jira
 import json
 import logging
-# import oauthlib
 import os
 import requests
 import requests_oauthlib
 import time
 import urllib
 import webbrowser
+import sys
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Exchanges web sessions for oauth tokens')
 
-    parser.add_argument('-j', '--jira', dest='url', required=True,
+    parser.add_argument('-c', '--config', dest='config', default='/etc/jira-tools.json',
+                        help='Config file for jira tools. Includes the secrets')
+
+    parser.add_argument('-j', '--jira', dest='url', required=False,
                         help='Jira URL')
-
-    parser.add_argument('-s', '--secret', dest='consumer_key', required=True,
-                        help='Consumer Secret Key (Application Secret Shared with Jira)')
-
-    parser.add_argument('-k', '--rsa-key', dest='rsa_key', required=True,
-                        type=argparse.FileType('r'),
-                        help='Consumer RSA Key (Application Secret Shared with Jira)')
 
     parser.add_argument('-o', '--output', dest='outfile', default='~/.jira-credentials.json',
                         help='Where to output credentials')
@@ -48,18 +44,16 @@ def parse_args():
                         help="Set the logging level")
 
     args = parser.parse_args()
-    args.rsa_key = args.rsa_key.read()
     return args
 
 
-def get_initial_oauth(args):
-
+def get_initial_oauth(url, auth):
     oauth = requests_oauthlib.OAuth1(
-        args.consumer_key,
+        auth['consumer_key'],
         signature_method=requests_oauthlib.oauth1_session.SIGNATURE_RSA,
-        rsa_key=args.rsa_key)
+        rsa_key=auth['rsa_key'])
 
-    res = requests.post(args.url + '/plugins/servlet/oauth/request-token',
+    res = requests.post(url + '/plugins/servlet/oauth/request-token',
                         auth=oauth)
     res.raise_for_status()
 
@@ -68,38 +62,34 @@ def get_initial_oauth(args):
     return data
 
 
-def get_authentication(args, oauth_data):
-
+def get_authentication(url, auth, oauth_data, timeout=10, poll_interval=2):
     oauth = requests_oauthlib.OAuth1(
-        args.consumer_key,
+        auth['consumer_key'],
         signature_method=requests_oauthlib.oauth1_session.SIGNATURE_RSA,
-        rsa_key=args.rsa_key,
+        rsa_key=auth['rsa_key'],
         resource_owner_key=oauth_data[b'oauth_token'],
         resource_owner_secret=oauth_data[b'oauth_token_secret'])
 
     jira_attempts = 0
     while(True):
-        time.sleep(args.poll_interval)
+        time.sleep(poll_interval)
         jira_attempts += 1
 
-        res = requests.post(args.url + '/plugins/servlet/oauth/access-token', auth=oauth)
+        res = requests.post(url + '/plugins/servlet/oauth/access-token', auth=oauth)
         if res.status_code == 200:
             break
 
-        if args.poll_interval * jira_attempts > args.jira_timeout:
+        if poll_interval * jira_attempts > timeout:
             logger.critical('Timed out')
-            os.exit(1)
+            sys.exit(1)
 
     data = dict(urllib.parse.parse_qsl(res.content))
 
-    # Field names are what the jira python lib expects
-    credentials = {
-        'access_token': data[b'oauth_token'].decode('utf-8'),
-        'access_token_secret': data[b'oauth_token_secret'].decode('utf-8'),
-        'consumer_key': args.consumer_key,
-        'key_cert': args.rsa_key
-    }
-    return credentials
+    # python3 returns stuff as b'xxx' style strings, which breaks
+    # other things. So squash it.
+    decoded_data = {key.decode(): val.decode() for key, val in data.items()}
+
+    return decoded_data
 
 
 def test_creds(url, credentials):
@@ -111,13 +101,40 @@ def test_creds(url, credentials):
               oauth=credentials)
 
 
+def merge_credentials(shared_creds, session_creds):
+    merged_creds = {
+        'access_token': session_creds['oauth_token'],
+        'access_token_secret': session_creds['oauth_token_secret'],
+        'consumer_key': shared_creds['consumer_key'],
+        'key_cert': shared_creds['rsa_key'],
+    }
+    return merged_creds
+
+
 def main():
     args = parse_args()
     logging.basicConfig(level=getattr(logging, args.log_level))
 
-    oauth_data = get_initial_oauth(args)
+    # read in the config file, and figure out what's what
+    config_data = json.loads(open(args.config, 'r').read())
+
+    # Find the jira URL
+    url = config_data.get('metadata', {}).get('default', None)
+    if args.url is not None:
+        url = args.url
+
+    if url is None:
+        logging.critical('No specified jira url. Either put it in the config, or use --jira')
+        sys.exit(1)
+
+    if url not in config_data:
+        logging.critical('No jira config for "{url}"'.format(url=url))
+        sys.exit(1)
+
+    oauth_data = get_initial_oauth(url, config_data[url])
+
     authorize_url = "{jira}/plugins/servlet/oauth/authorize?oauth_token={token}".format(
-        jira=args.url, token=oauth_data[b'oauth_token'].decode('utf-8')
+        jira=url, token=oauth_data[b'oauth_token'].decode('utf-8')
     )
 
     print('Please authenticate this application to Jira.')
@@ -126,9 +143,10 @@ def main():
     if args.no_web is False:
         webbrowser.open_new(authorize_url)
 
-    credentials = get_authentication(args, oauth_data)
+    credentials = get_authentication(url, config_data[url], oauth_data, timeout=args.jira_timeout, poll_interval=args.poll_interval)
 
-    test_creds(args.url, credentials)
+    merged_creds = merge_credentials(config_data[url], credentials)
+    test_creds(url, merged_creds)
 
     # Some kinda ugly code to read file, ensure it's a dict, update
     # this jira server, and write it.
@@ -137,11 +155,11 @@ def main():
         '_meta': {}
         }
     if os.path.exists(credfile) and os.path.isfile(credfile):
-        creddata = open(credfile, 'r').read()
+        creddata = json.loads(open(credfile, 'r').read())
 
     creddata['_meta']['updated'] = time.strftime('%s')
     creddata['_meta']['created_by'] = 'Created by https://github.com/directionless/jira-tools'
-    creddata[args.url] = credentials
+    creddata[url] = credentials
 
     with open(credfile, 'w') as fh:
         json.dump(creddata, fh, indent=4, sort_keys=True)
