@@ -16,6 +16,10 @@ import urllib
 import webbrowser
 import sys
 
+# Yeah... This isn't a real module yet
+sys.path.insert(0, "../settings")
+from jiratools import JiraTools
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Exchanges web sessions for oauth tokens')
